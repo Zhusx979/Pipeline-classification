@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dataset and local resources
+dataset/
+dino_model/
+paper/
+
+# Training outputs and visualizations
+result_*/
+stage2_result_*/
+stage2_heatmaps/
+image/
+gradcam_overlay.png
+
+# Model weights and exported artifacts
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.bin
+*.safetensors
+
+# Archives and large local bundles
+*.zip
+*.7z
+*.tar
+*.gz
+
+# Logs
+*.log
+
+# Paper build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.spl
+*.synctex.gz
+*.toc
