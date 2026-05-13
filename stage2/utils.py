@@ -19,6 +19,16 @@ def heatmap_cache_path(heatmap_root: str | Path, image_path: str, split: str = "
     return root / split / f"{digest}.png"
 
 
+def build_stage2_heatmap_root(
+    heatmap_cache_root: str | Path,
+    checkpoint_path: str | Path,
+    cache_version: str,
+) -> Path:
+    root = resolve_project_path(heatmap_cache_root)
+    checkpoint_stem = Path(checkpoint_path).stem
+    return root / f"{checkpoint_stem}_{cache_version}"
+
+
 def load_state_dict_compat(model: torch.nn.Module, checkpoint_path: str | Path) -> torch.nn.Module:
     resolved_checkpoint_path = resolve_project_path(checkpoint_path)
     checkpoint = torch.load(resolved_checkpoint_path, map_location="cpu")

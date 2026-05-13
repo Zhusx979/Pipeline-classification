@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--num-classes", type=int, default=4)
+    parser.add_argument("--heatmap-guidance-scale", type=float, default=1.0)
     parser.add_argument("--multi-gpu", action="store_true", help="Use DataParallel when multiple CUDA devices are available.")
     parser.add_argument("--train-txt", default=None)
     parser.add_argument("--val-txt", default=None)
@@ -45,6 +46,7 @@ def main():
         num_workers=args.num_workers,
         epochs=args.epochs,
         num_classes=args.num_classes,
+        heatmap_guidance_scale=args.heatmap_guidance_scale,
         use_multi_gpu=args.multi_gpu,
     )
     print(f"Using DINO path: {cfg.dino_path or DEFAULT_DINO_PATH}")

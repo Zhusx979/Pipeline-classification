@@ -25,6 +25,7 @@ class Stage2DatasetConfig:
     drop_last: bool = True
     shuffle_train: bool = True
     heatmap_cache_root: str = str(PROJECT_ROOT / "stage2_heatmaps")
+    heatmap_cache_version: str = "cam_v2_gray_gttrain_pred_eval"
 
 
 @dataclass
@@ -45,7 +46,11 @@ class Stage2ExperimentConfig:
     dino_lr: float = 0.0
     projection_lr: float = 1e-3
     classifier_lr: float = 1e-3
-    adapter_reconstruction_weight: float = 0.1
+    label_smoothing: float = 0.1
+    grad_clip_norm: float = 1.0
+    heatmap_guidance_scale: float = 1.0
+    heatmap_train_use_gt: bool = True
+    heatmap_eval_use_gt: bool = False
     weight_decay: float = 1e-4
     eta_min: float = 1e-6
     save_root: str = "./stage2_result"
@@ -129,6 +134,7 @@ def build_stage2_experiment_config(
     num_workers: Optional[int] = None,
     epochs: Optional[int] = None,
     num_classes: Optional[int] = None,
+    heatmap_guidance_scale: Optional[float] = None,
     use_multi_gpu: bool = False,
     extra: Optional[Dict[str, object]] = None,
 ) -> Stage2ExperimentConfig:
@@ -162,7 +168,11 @@ def build_stage2_experiment_config(
         dino_lr=float(preset["dino_lr"]),
         projection_lr=float(preset["projection_lr"]),
         classifier_lr=float(preset["classifier_lr"]),
-        adapter_reconstruction_weight=0.1,
+        label_smoothing=0.1,
+        grad_clip_norm=1.0,
+        heatmap_guidance_scale=heatmap_guidance_scale or 1.0,
+        heatmap_train_use_gt=True,
+        heatmap_eval_use_gt=False,
         weight_decay=1e-4,
         eta_min=1e-6,
         save_root=str(preset["save_root"]),

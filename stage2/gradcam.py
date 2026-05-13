@@ -32,14 +32,22 @@ class GradCAM:
         for hook in self.hooks:
             hook.remove()
 
-    def __call__(self, input_tensor: torch.Tensor):
+    def __call__(self, input_tensor: torch.Tensor, class_idx: int | None = None):
         self.model.eval()
         output = self.model(input_tensor)
-        class_idx = torch.argmax(output, dim=1)
+        if class_idx is None:
+            class_indices = torch.argmax(output, dim=1)
+        else:
+            class_indices = torch.full(
+                (output.size(0),),
+                int(class_idx),
+                device=output.device,
+                dtype=torch.long,
+            )
 
         self.model.zero_grad(set_to_none=True)
         one_hot = torch.zeros_like(output)
-        one_hot[torch.arange(output.size(0), device=output.device), class_idx] = 1.0
+        one_hot[torch.arange(output.size(0), device=output.device), class_indices] = 1.0
         output.backward(gradient=one_hot)
 
         grads = self.gradients
@@ -62,7 +70,7 @@ class GradCAM:
         cam_min = cam.amin(dim=(1, 2), keepdim=True)
         cam_max = cam.amax(dim=(1, 2), keepdim=True)
         cam = (cam - cam_min) / (cam_max - cam_min + 1e-8)
-        return cam[0].detach().cpu().numpy(), int(class_idx[0].item())
+        return cam[0].detach().cpu().numpy(), int(class_indices[0].item())
 
 
 def save_pure_heatmap(heatmap: np.ndarray, save_path: str | Path, output_size: tuple[int, int] | None = None):
@@ -75,6 +83,18 @@ def save_pure_heatmap(heatmap: np.ndarray, save_path: str | Path, output_size: t
 
     heatmap_rgb = (plt.get_cmap("magma")(heatmap)[..., :3] * 255).astype(np.uint8)
     Image.fromarray(heatmap_rgb).save(save_path)
+
+
+def save_grayscale_heatmap(heatmap: np.ndarray, save_path: str | Path, output_size: tuple[int, int] | None = None):
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    heatmap = np.clip(heatmap, 0.0, 1.0)
+    if output_size is not None and heatmap.shape[:2] != output_size:
+        heatmap = cv2.resize(heatmap, output_size, interpolation=cv2.INTER_LINEAR)
+
+    heatmap_gray = (heatmap * 255).astype(np.uint8)
+    Image.fromarray(heatmap_gray, mode="L").save(save_path)
 
 
 def save_overlay_heatmap(

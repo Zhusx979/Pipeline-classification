@@ -11,7 +11,7 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 
-from data.dataset import AlbumentationsTransformVal, _resolve_image_path
+from data.dataset import _resolve_image_path
 from .utils import heatmap_cache_path
 
 
@@ -35,6 +35,11 @@ class AlbumentationsTransformStage2Train:
         )
         self.transform = A.Compose(
             [
+                A.RandomBrightnessContrast(
+                    brightness_limit=(-0.2, 0.2),
+                    contrast_limit=(-0.2, 0.2),
+                    p=0.4,
+                ),
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.5),
                 ToTensorV2(),
@@ -62,7 +67,42 @@ class AlbumentationsTransformStage2Train:
         augmented = self.transform(image=img, heatmap=heatmap)
         image_tensor = augmented["image"].float() / 255.0
         heatmap_tensor = augmented["heatmap"].float() / 255.0
-        return torch.cat([image_tensor, heatmap_tensor], dim=0)
+        if heatmap_tensor.dim() == 3 and heatmap_tensor.shape[0] > 1:
+            heatmap_tensor = heatmap_tensor[:1]
+        return image_tensor, heatmap_tensor
+
+
+class AlbumentationsTransformStage2Eval:
+    def __init__(self, height: int = 256, width: int = 256):
+        self.height = height
+        self.width = width
+        self.transform = A.Compose(
+            [
+                A.LongestMaxSize(max_size=max(height, width), p=1),
+                A.PadIfNeeded(
+                    min_height=height,
+                    min_width=width,
+                    value=0,
+                    border_mode=cv2.BORDER_CONSTANT,
+                    position="top_left",
+                    p=1,
+                ),
+                ToTensorV2(),
+            ],
+            additional_targets={"heatmap": "image"},
+        )
+
+    def __call__(self, img, heatmap):
+        img = np.array(img)
+        heatmap = np.array(heatmap)
+        augmented = self.transform(image=img, heatmap=heatmap)
+        image_tensor = augmented["image"].float() / 255.0
+        heatmap_tensor = augmented["heatmap"].float() / 255.0
+        if heatmap_tensor.dim() == 2:
+            heatmap_tensor = heatmap_tensor.unsqueeze(0)
+        elif heatmap_tensor.dim() == 3 and heatmap_tensor.shape[0] > 1:
+            heatmap_tensor = heatmap_tensor[:1]
+        return image_tensor, heatmap_tensor
 
 
 class _BaseStage2TxtDataset(Dataset):
@@ -107,19 +147,25 @@ class Stage2TrainDatasetFromTxt(_BaseStage2TxtDataset):
             raise RuntimeError(f"Missing cached heatmap for training sample: {heatmap_path}")
 
         image = Image.open(img_path).convert("RGB")
-        heatmap = Image.open(heatmap_path).convert("RGB")
+        heatmap = Image.open(heatmap_path).convert("L")
         if self.transform:
-            image = self.transform(image, heatmap)
-        return image, self.labels[idx]
+            image, heatmap = self.transform(image, heatmap)
+        return image, heatmap, self.labels[idx]
 
 
 class Stage2EvalDatasetFromTxt(_BaseStage2TxtDataset):
-    def __init__(self, txt_file_list, transform=None):
-        super().__init__(txt_file_list, transform=transform or AlbumentationsTransformVal())
+    def __init__(self, txt_file_list, heatmap_root, split: str, transform=None):
+        super().__init__(txt_file_list, transform=transform or AlbumentationsTransformStage2Eval())
+        self.heatmap_root = Path(heatmap_root)
+        self.split = split
 
     def __getitem__(self, idx):
         img_path = self.image_paths[idx]
+        heatmap_path = heatmap_cache_path(self.heatmap_root, img_path, split=self.split)
+        if not heatmap_path.exists():
+            raise RuntimeError(f"Missing cached heatmap for evaluation sample: {heatmap_path}")
         image = Image.open(img_path).convert("RGB")
+        heatmap = Image.open(heatmap_path).convert("L")
         if self.transform:
-            image = self.transform(image)
-        return image, self.labels[idx]
+            image, heatmap = self.transform(image, heatmap)
+        return image, heatmap, self.labels[idx]

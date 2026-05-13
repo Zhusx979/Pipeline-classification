@@ -14,7 +14,7 @@ def _freeze_module(module: nn.Module):
 class Stage2BackboneDinoHeatmapFusion(nn.Module):
     def __init__(self, num_classes: int, dino_path: str, backbone_name: str = "resnet50"):
         super().__init__()
-        self.backbone = timm.create_model(backbone_name, pretrained=True, num_classes=0, in_chans=6)
+        self.backbone = timm.create_model(backbone_name, pretrained=True, num_classes=0, in_chans=3)
         self.backbone_dim = getattr(self.backbone, "num_features", None)
         if self.backbone_dim is None:
             raise ValueError(f"Stage2 backbone {backbone_name} does not expose num_features.")
@@ -28,31 +28,62 @@ class Stage2BackboneDinoHeatmapFusion(nn.Module):
             nn.LayerNorm(self.backbone_dim),
             nn.ReLU(inplace=True),
         )
-        self.classifier = nn.Linear(self.backbone_dim, num_classes)
+        self.heatmap_encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(16, 1, kernel_size=1, bias=True),
+            nn.Sigmoid(),
+        )
+        self.heatmap_pool = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(1, self.backbone_dim),
+            nn.LayerNorm(self.backbone_dim),
+            nn.Sigmoid(),
+        )
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(self.backbone_dim),
+            nn.Dropout(p=0.3),
+            nn.Linear(self.backbone_dim, self.backbone_dim // 2),
+            nn.GELU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(self.backbone_dim // 2, num_classes),
+        )
 
-        self.eval_input_adapter = nn.Conv2d(3, 6, kernel_size=1, bias=False)
-        self._init_eval_input_adapter()
+    def _split_input(self, image, heatmap=None):
+        if heatmap is None:
+            if image.shape[1] == 4:
+                return image[:, :3, :, :], image[:, 3:, :, :]
+            if image.shape[1] == 3:
+                zero_heatmap = torch.zeros(
+                    image.shape[0],
+                    1,
+                    image.shape[2],
+                    image.shape[3],
+                    device=image.device,
+                    dtype=image.dtype,
+                )
+                return image, zero_heatmap
+            raise ValueError(f"Stage2 model expects 3-channel image (+ heatmap) or packed 4 channels, got {image.shape[1]}.")
+        return image, heatmap
 
-    def _init_eval_input_adapter(self):
-        with torch.no_grad():
-            self.eval_input_adapter.weight.zero_()
-            for channel in range(3):
-                self.eval_input_adapter.weight[channel, channel, 0, 0] = 1.0
-                self.eval_input_adapter.weight[channel + 3, channel, 0, 0] = 1.0
+    def forward(self, image, heatmap=None, guidance_scale: float = 1.0):
+        raw_input, heatmap_input = self._split_input(image, heatmap)
+        if heatmap_input.dim() == 3:
+            heatmap_input = heatmap_input.unsqueeze(1)
+        heatmap_input = heatmap_input.float()
+        if heatmap_input.shape[1] != 1:
+            heatmap_input = heatmap_input[:, :1, :, :]
 
-    def _split_input(self, x):
-        if x.shape[1] == 6:
-            return x, x[:, :3, :, :]
-        if x.shape[1] == 3:
-            return self.eval_input_adapter(x), x
-        raise ValueError(f"Stage2 model expects 3 or 6 input channels, got {x.shape[1]}.")
-
-    def forward(self, x):
-        heatmap_input, raw_input = self._split_input(x)
-        backbone_feat = self.backbone(heatmap_input)
+        attention_map = self.heatmap_encoder(heatmap_input)
+        guided_input = raw_input * (1.0 + guidance_scale * attention_map)
+        backbone_feat = self.backbone(guided_input)
         with torch.no_grad():
             dino_out = self.dino(raw_input)
             dino_feat = dino_out.last_hidden_state[:, 0, :]
         dino_proj = self.dino_project(dino_feat)
+        heatmap_gate = self.heatmap_pool(attention_map)
         fused_feat = backbone_feat * dino_proj
+        fused_feat = fused_feat * (1.0 + heatmap_gate)
         return self.classifier(fused_feat)

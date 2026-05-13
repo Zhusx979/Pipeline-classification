@@ -11,7 +11,6 @@ import pandas as pd
 from PIL import Image
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -19,14 +18,14 @@ from tqdm import tqdm
 from data.dataset import AlbumentationsTransformVal, ImageDatasetFromTxt
 from metrics.classification_metrics import compute_classification_metrics, flatten_metric_dict
 from common.model_profile import format_model_profile, model_profile_to_dict, profile_model
-from common.path_utils import build_timestamped_output_dir, ensure_file, resolve_project_path
+from common.path_utils import build_timestamped_output_dir, ensure_file
 from common.plotting import save_training_curve_grid
 from models.model_factory import build_model
 from .config import Stage2ExperimentConfig
-from .dataset import AlbumentationsTransformStage2Train, Stage2EvalDatasetFromTxt, Stage2TrainDatasetFromTxt
-from .gradcam import GradCAM, save_pure_heatmap
+from .dataset import AlbumentationsTransformStage2Eval, AlbumentationsTransformStage2Train, Stage2EvalDatasetFromTxt, Stage2TrainDatasetFromTxt
+from .gradcam import GradCAM, save_grayscale_heatmap
 from .model import Stage2BackboneDinoHeatmapFusion
-from .utils import load_state_dict_compat, heatmap_cache_path, resolve_stage1_target_layer
+from .utils import build_stage2_heatmap_root, load_state_dict_compat, heatmap_cache_path, resolve_stage1_target_layer
 
 
 def _unwrap_model(model: nn.Module) -> nn.Module:
@@ -54,14 +53,28 @@ def _make_loaders(cfg: Stage2ExperimentConfig):
     val_txt = ensure_file(cfg.dataset.val_txt, description="validation txt file")
     test_txt = ensure_file(cfg.dataset.test_txt, description="test txt file")
     checkpoint_path = ensure_file(cfg.stage1_checkpoint, description="stage1 checkpoint")
-    heatmap_root = resolve_project_path(cfg.dataset.heatmap_cache_root) / checkpoint_path.stem
+    heatmap_root = build_stage2_heatmap_root(
+        cfg.dataset.heatmap_cache_root,
+        checkpoint_path,
+        cfg.dataset.heatmap_cache_version,
+    )
     train_dataset = Stage2TrainDatasetFromTxt(
         [train_txt],
         heatmap_root,
         AlbumentationsTransformStage2Train(cfg.image_size, cfg.image_size),
     )
-    val_dataset = Stage2EvalDatasetFromTxt([val_txt], AlbumentationsTransformVal(cfg.image_size, cfg.image_size))
-    test_dataset = Stage2EvalDatasetFromTxt([test_txt], AlbumentationsTransformVal(cfg.image_size, cfg.image_size))
+    val_dataset = Stage2EvalDatasetFromTxt(
+        [val_txt],
+        heatmap_root,
+        split="valid",
+        transform=AlbumentationsTransformStage2Eval(cfg.image_size, cfg.image_size),
+    )
+    test_dataset = Stage2EvalDatasetFromTxt(
+        [test_txt],
+        heatmap_root,
+        split="test",
+        transform=AlbumentationsTransformStage2Eval(cfg.image_size, cfg.image_size),
+    )
 
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -96,10 +109,12 @@ def _build_optimizer(model: nn.Module, cfg: Stage2ExperimentConfig):
         params.append({"params": model.dino.parameters(), "lr": cfg.dino_lr})
     if hasattr(model, "dino_project"):
         params.append({"params": model.dino_project.parameters(), "lr": cfg.projection_lr})
+    if hasattr(model, "heatmap_encoder"):
+        params.append({"params": model.heatmap_encoder.parameters(), "lr": cfg.projection_lr})
+    if hasattr(model, "heatmap_pool"):
+        params.append({"params": model.heatmap_pool.parameters(), "lr": cfg.projection_lr})
     if hasattr(model, "classifier"):
         params.append({"params": model.classifier.parameters(), "lr": cfg.classifier_lr})
-    if hasattr(model, "eval_input_adapter"):
-        params.append({"params": model.eval_input_adapter.parameters(), "lr": cfg.projection_lr})
 
     if not params:
         params = [{"params": model.parameters(), "lr": cfg.backbone_lr}]
@@ -162,7 +177,11 @@ def _print_class_metrics(metrics: Dict[str, object]):
         print(" | ".join(f"{row[i]:<{col_widths[i]}}" for i in range(len(headers))))
 
 
-def _evaluate(model, loader, criterion, device):
+def _model_forward(model, images, heatmaps, cfg: Stage2ExperimentConfig):
+    return model(images, heatmaps, guidance_scale=cfg.heatmap_guidance_scale)
+
+
+def _evaluate(model, loader, criterion, device, cfg: Stage2ExperimentConfig):
     model.eval()
     total_loss = 0.0
     all_preds = []
@@ -172,10 +191,11 @@ def _evaluate(model, loader, criterion, device):
     total_samples = 0
 
     with torch.no_grad():
-        for images, labels in loader:
+        for images, heatmaps, labels in loader:
             images = images.to(device)
+            heatmaps = heatmaps.to(device)
             labels = labels.to(device)
-            outputs = model(images)
+            outputs = _model_forward(model, images, heatmaps, cfg)
             loss = criterion(outputs, labels)
             probs = _collect_probs(outputs)
             preds = np.argmax(probs, axis=1)
@@ -219,6 +239,10 @@ Backbone: {cfg.backbone}
 DINO Path: {cfg.dino_path}
 Stage1 Preset: {cfg.stage1_preset_name}
 Stage1 Checkpoint: {cfg.stage1_checkpoint}
+Heatmap Cache Version: {cfg.dataset.heatmap_cache_version}
+Heatmap Guidance Scale: {cfg.heatmap_guidance_scale}
+Train Heatmap Uses GT Label: {cfg.heatmap_train_use_gt}
+Eval Heatmap Uses GT Label: {cfg.heatmap_eval_use_gt}
 Image Size: {cfg.image_size}
 Classes: {cfg.num_classes}
 Epochs: {cfg.epochs}
@@ -259,34 +283,43 @@ def _prepare_heatmaps(cfg: Stage2ExperimentConfig, device):
     if not cfg.stage1_checkpoint:
         raise ValueError("Please set STAGE1_CHECKPOINT in run_stage2.py before running stage2.")
 
-    train_txt = ensure_file(cfg.dataset.train_txt, description="train txt file")
     checkpoint_path = ensure_file(cfg.stage1_checkpoint, description="stage1 checkpoint")
-    heatmap_root = resolve_project_path(cfg.dataset.heatmap_cache_root) / checkpoint_path.stem
+    heatmap_root = build_stage2_heatmap_root(
+        cfg.dataset.heatmap_cache_root,
+        checkpoint_path,
+        cfg.dataset.heatmap_cache_version,
+    )
     heatmap_root.mkdir(parents=True, exist_ok=True)
-    final_train_dir = heatmap_root / "train"
-    final_train_dir.mkdir(parents=True, exist_ok=True)
-
-    train_dataset = ImageDatasetFromTxt([train_txt], AlbumentationsTransformVal(cfg.image_size, cfg.image_size))
     stage1_model = _build_stage1_model(cfg, device)
     target_layer = resolve_stage1_target_layer(stage1_model)
     cam_tool = GradCAM(stage1_model, target_layer)
 
-    for idx in tqdm(range(len(train_dataset)), desc="Generating stage2 heatmaps"):
-        image, _ = train_dataset[idx]
-        img_path = train_dataset.image_paths[idx]
-        save_path = heatmap_cache_path(heatmap_root, img_path, split="train")
-        if save_path.exists():
-            try:
-                cached_heatmap = Image.open(save_path)
-                if cached_heatmap.size == (cfg.image_size, cfg.image_size):
-                    continue
-            except Exception:
-                pass
+    split_specs = [
+        ("train", ensure_file(cfg.dataset.train_txt, description="train txt file"), cfg.heatmap_train_use_gt),
+        ("valid", ensure_file(cfg.dataset.val_txt, description="validation txt file"), cfg.heatmap_eval_use_gt),
+        ("test", ensure_file(cfg.dataset.test_txt, description="test txt file"), cfg.heatmap_eval_use_gt),
+    ]
 
-        input_tensor = image.unsqueeze(0).to(device)
-        input_tensor.requires_grad_(True)
-        heatmap, _ = cam_tool(input_tensor)
-        save_pure_heatmap(heatmap, save_path, output_size=(cfg.image_size, cfg.image_size))
+    for split_name, txt_path, use_gt_label in split_specs:
+        (heatmap_root / split_name).mkdir(parents=True, exist_ok=True)
+        split_dataset = ImageDatasetFromTxt([txt_path], AlbumentationsTransformVal(cfg.image_size, cfg.image_size))
+        for idx in tqdm(range(len(split_dataset)), desc=f"Generating stage2 heatmaps [{split_name}]"):
+            image, label = split_dataset[idx]
+            img_path = split_dataset.image_paths[idx]
+            save_path = heatmap_cache_path(heatmap_root, img_path, split=split_name)
+            if save_path.exists():
+                try:
+                    cached_heatmap = Image.open(save_path)
+                    if cached_heatmap.size == (cfg.image_size, cfg.image_size):
+                        continue
+                except Exception:
+                    pass
+
+            input_tensor = image.unsqueeze(0).to(device)
+            input_tensor.requires_grad_(True)
+            target_class = int(label) if use_gt_label else None
+            heatmap, _ = cam_tool(input_tensor, class_idx=target_class)
+            save_grayscale_heatmap(heatmap, save_path, output_size=(cfg.image_size, cfg.image_size))
 
     cam_tool.remove_hooks()
     return heatmap_root
@@ -296,7 +329,7 @@ def train_stage2_experiment(cfg: Stage2ExperimentConfig):
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
     device = _infer_device()
-    heatmap_root = _prepare_heatmaps(cfg, device)
+    _prepare_heatmaps(cfg, device)
     train_loader, val_loader, test_loader, _ = _make_loaders(cfg)
 
     base_model = Stage2BackboneDinoHeatmapFusion(
@@ -308,7 +341,7 @@ def train_stage2_experiment(cfg: Stage2ExperimentConfig):
     model = _prepare_model_for_training(base_model, cfg, device)
     print("\nModel Profile:")
     print(format_model_profile(model_profile))
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=cfg.label_smoothing)
     optimizer = _build_optimizer(model, cfg)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.epochs, eta_min=cfg.eta_min)
 
@@ -384,17 +417,17 @@ def train_stage2_experiment(cfg: Stage2ExperimentConfig):
         total_correct = 0
         total_samples = 0
 
-        for images, labels in tqdm(train_loader, desc=f"Stage2 Epoch {epoch + 1}/{cfg.epochs}"):
+        for images, heatmaps, labels in tqdm(train_loader, desc=f"Stage2 Epoch {epoch + 1}/{cfg.epochs}"):
             images = images.to(device)
+            heatmaps = heatmaps.to(device)
             labels = labels.to(device)
-            outputs = model(images)
-            cls_loss = criterion(outputs, labels)
-            adapter_pred = _unwrap_model(model).eval_input_adapter(images[:, :3, :, :])
-            adapter_loss = F.mse_loss(adapter_pred, images.detach())
-            loss = cls_loss + cfg.adapter_reconstruction_weight * adapter_loss
+            outputs = _model_forward(model, images, heatmaps, cfg)
+            loss = criterion(outputs, labels)
 
             optimizer.zero_grad()
             loss.backward()
+            if cfg.grad_clip_norm and cfg.grad_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip_norm)
             optimizer.step()
 
             total_loss += loss.item()
@@ -406,8 +439,8 @@ def train_stage2_experiment(cfg: Stage2ExperimentConfig):
 
         train_loss = total_loss / max(len(train_loader), 1)
         train_acc = 100.0 * total_correct / max(total_samples, 1)
-        val_metrics = _evaluate(model, val_loader, criterion, device)
-        test_metrics = _evaluate(model, test_loader, criterion, device)
+        val_metrics = _evaluate(model, val_loader, criterion, device, cfg)
+        test_metrics = _evaluate(model, test_loader, criterion, device, cfg)
         is_best = val_metrics["acc_percent"] > best_val_acc
 
         row = {

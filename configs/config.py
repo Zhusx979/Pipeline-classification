@@ -331,9 +331,9 @@ MODEL_PRESETS: Dict[str, Dict[str, object]] = {
         transformer_name="facebook/dinov2-base",
         transformer_source="hf",
     ),
-    "resnet50_coat_tiny_pointwise": _preset(
-        name="ResNet50 + CoaT Tiny Pointwise Multiplication",
-        backbone="resnet50",
+    "resnet18_coat_tiny_pointwise": _preset(
+        name="ResNet18 + CoaT Tiny Pointwise Multiplication",
+        backbone="resnet18",
         fusion="mul",
         projection_dim=512,
         dino_lr=1e-5,
@@ -341,9 +341,9 @@ MODEL_PRESETS: Dict[str, Dict[str, object]] = {
         transformer_name="coat_tiny.in1k",
         transformer_source="timm",
     ),
-    "resnet50_coat_small_pointwise": _preset(
-        name="ResNet50 + CoaT Small Pointwise Multiplication",
-        backbone="resnet50",
+    "resnet18_coat_small_pointwise": _preset(
+        name="ResNet18 + CoaT Small Pointwise Multiplication",
+        backbone="resnet18",
         fusion="mul",
         projection_dim=512,
         dino_lr=1e-5,
@@ -351,9 +351,9 @@ MODEL_PRESETS: Dict[str, Dict[str, object]] = {
         transformer_name="coat_small.in1k",
         transformer_source="timm",
     ),
-    "resnet50_deit_tiny_pointwise": _preset(
-        name="ResNet50 + DeiT-Tiny Pointwise Multiplication",
-        backbone="resnet50",
+    "resnet18_deit_tiny_pointwise": _preset(
+        name="ResNet18 + DeiT-Tiny Pointwise Multiplication",
+        backbone="resnet18",
         fusion="mul",
         projection_dim=512,
         dino_lr=1e-5,
@@ -361,9 +361,9 @@ MODEL_PRESETS: Dict[str, Dict[str, object]] = {
         transformer_name="deit_tiny_patch16_224",
         transformer_source="timm",
     ),
-    "resnet50_vit_tiny_pointwise": _preset(
-        name="ResNet50 + ViT-Tiny Pointwise Multiplication",
-        backbone="resnet50",
+    "resnet18_vit_tiny_pointwise": _preset(
+        name="ResNet18 + ViT-Tiny Pointwise Multiplication",
+        backbone="resnet18",
         fusion="mul",
         projection_dim=512,
         dino_lr=1e-5,

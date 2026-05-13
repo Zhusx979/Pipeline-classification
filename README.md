@@ -142,14 +142,14 @@ python run.py --preset coat_tiny --epochs 50 --batch-size 32 --image-size 224 --
 python run.py --preset coat_small --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
 ```
 
-固定 CNN 为 ResNet50，比较不同 Transformer：
+固定 CNN 为 ResNet18，比较不同 Transformer：
 
 ```bash
-python run.py --preset resnet50_dino_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
-python run.py --preset resnet50_deit_tiny_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
-python run.py --preset resnet50_vit_tiny_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
-python run.py --preset resnet50_coat_tiny_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
-python run.py --preset resnet50_coat_small_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
+python run.py --preset resnet18_dino_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
+python run.py --preset resnet18_deit_tiny_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
+python run.py --preset resnet18_vit_tiny_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
+python run.py --preset resnet18_coat_tiny_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
+python run.py --preset resnet18_coat_small_pointwise --epochs 50 --batch-size 32 --image-size 224 --num-workers 4
 ```
 
 如果服务器不能联网，请额外追加：

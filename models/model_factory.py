@@ -22,17 +22,17 @@ BACKBONE_CLASSIFIER_PRESETS = {
     "inception_v3": ("inception_v3", True),
     "mobilenetv3_small": ("mobilenetv3_small_100", True),
     "efficientnet_b0": ("efficientnet_b0", True),
-    "hrnet_w18_scratch": ("hrnet_w18", False),
-    "rexnet_100_scratch": ("rexnet_100", False),
-    "regnety_002_scratch": ("regnety_002", False),
+    "hrnet_w18_scratch": ("hrnet_w18", True),
+    "rexnet_100_scratch": ("rexnet_100", True),
+    "regnety_002_scratch": ("regnety_002", True),
     "coat_tiny": ("coat_tiny.in1k", True),
     "coat_small": ("coat_small.in1k", True),
-    "swin_tiny_cls_scratch": ("swin_tiny_patch4_window7_224.ms_in1k", False),
-    "xcit_nano_cls_scratch": ("xcit_nano_12_p16_224.fb_in1k", False),
-    "twins_svt_small_cls_scratch": ("twins_svt_small.in1k", False),
-    "mambaout_femto_cls_scratch": ("mambaout_femto.in1k", False),
-    "mambaout_kobe_cls_scratch": ("mambaout_kobe.in1k", False),
-    "mambaout_tiny_cls_scratch": ("mambaout_tiny.in1k", False),
+    "swin_tiny_cls_scratch": ("swin_tiny_patch4_window7_224.ms_in1k", True),
+    "xcit_nano_cls_scratch": ("xcit_nano_12_p16_224.fb_in1k", True),
+    "twins_svt_small_cls_scratch": ("twins_svt_small.in1k", True),
+    "mambaout_femto_cls_scratch": ("mambaout_femto.in1k", True),
+    "mambaout_kobe_cls_scratch": ("mambaout_kobe.in1k", True),
+    "mambaout_tiny_cls_scratch": ("mambaout_tiny.in1k", True),
 }
 
 TIMM_TRANSFORMER_PRESETS = {
@@ -119,10 +119,10 @@ def build_model(preset_name: str, num_classes: int, dino_path: str):
         "coat_tiny_dino_pointwise": ("coat_tiny.in1k", "dinov2"),
         "coat_small_dino_pointwise": ("coat_small.in1k", "dinov2"),
         "inception_v3_dino_pointwise": ("inception_v3", "dinov2"),
-        "resnet50_coat_tiny_pointwise": ("resnet50", "coat_tiny"),
-        "resnet50_coat_small_pointwise": ("resnet50", "coat_small"),
-        "resnet50_deit_tiny_pointwise": ("resnet50", "deit_tiny"),
-        "resnet50_vit_tiny_pointwise": ("resnet50", "vit_tiny"),
+        "resnet18_coat_tiny_pointwise": ("resnet18", "coat_tiny"),
+        "resnet18_coat_small_pointwise": ("resnet18", "coat_small"),
+        "resnet18_deit_tiny_pointwise": ("resnet18", "deit_tiny"),
+        "resnet18_vit_tiny_pointwise": ("resnet18", "vit_tiny"),
     }
     if preset_name in dynamic_mul_presets:
         backbone_name, transformer_key = dynamic_mul_presets[preset_name]
